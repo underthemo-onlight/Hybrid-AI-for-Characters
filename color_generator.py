@@ -9,67 +9,57 @@ import time
 from tqdm import tqdm
 
 class GenerativeColorizer:
-    def __init__(self, max_retries=3):
-        # 모델 ID 설정 - 4GB 내외의 모델 사용
-        self.model_id = "stabilityai/stable-diffusion-2-1"
-        self.max_retries = max_retries
+    def __init__(self):
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        # 더 작고 빠른 모델 사용
+        self.model_id = "dreamlike-art/dreamlike-photoreal-2.0"
         
+        # 모델 캐시 디렉토리 설정
+        cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub")
+        os.makedirs(cache_dir, exist_ok=True)
+        
+        # 모델 다운로드 및 로딩
         try:
-            # 모델 캐시 디렉토리 설정
-            cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub")
-            os.makedirs(cache_dir, exist_ok=True)
-            
-            # 모델 다운로드 (재시도 로직 포함)
-            for attempt in range(self.max_retries):
-                try:
-                    print(f"모델 다운로드 시도 중... (시도 {attempt + 1}/{self.max_retries})")
-                    snapshot_download(
-                        repo_id=self.model_id,
-                        cache_dir=cache_dir,
-                        local_files_only=False,
-                        ignore_patterns=["*.msgpack", "*.h5", "*.ot", "*.safetensors"]  # 불필요한 파일 제외
-                    )
-                    break
-                except Exception as e:
-                    if attempt == self.max_retries - 1:
-                        raise
-                    print(f"다운로드 실패: {str(e)}")
-                    print("5초 후 재시도...")
-                    time.sleep(5)
-            
-            # 파이프라인 초기화
-            self.pipe = StableDiffusionPipeline.from_pretrained(
+            self.pipeline = StableDiffusionPipeline.from_pretrained(
                 self.model_id,
-                torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+                torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
                 cache_dir=cache_dir,
                 low_cpu_mem_usage=True,
                 safety_checker=None
             )
             
             if torch.cuda.is_available():
-                self.pipe = self.pipe.to("cuda")
+                self.pipeline = self.pipeline.to("cuda")
             else:
-                self.pipe.enable_attention_slicing()
+                self.pipeline.enable_attention_slicing()
                 
         except Exception as e:
             print(f"모델 로딩 중 오류 발생: {str(e)}")
             raise
         
-    def generate_texture(self, color_description, size=(512, 512)):
-        """텍스트 설명을 기반으로 텍스처/색상 생성"""
-        # 프롬프트 강화 - 텍스처/색상 관련 지시어 추가
-        prompt = f"A flat texture of {color_description} color, simple, minimalist"
+    def generate_texture(self, prompt):
+        """
+        패션 트렌드에 맞는 색상과 패턴을 생성합니다.
         
-        # 이미지 생성
-        with torch.no_grad():  # 메모리 절약
-            image = self.pipe(
-                prompt, 
-                height=size[0],
-                width=size[1],
-                num_inference_steps=20  # 기본값 사용
-            ).images[0]
+        Args:
+            prompt (str): 색상과 패턴에 대한 설명
+            
+        Returns:
+            numpy.ndarray: 생성된 이미지 (RGB 형식)
+        """
+        # 프롬프트에 패션 관련 키워드 추가
+        enhanced_prompt = f"fashion design color palette for {prompt}, trending fashion colors, professional fashion design, high quality, detailed, photorealistic"
         
-        # PIL에서 numpy 배열로 변환
+        # 이미지 생성 (더 빠른 설정)
+        image = self.pipeline(
+            enhanced_prompt,
+            num_inference_steps=15,  # 단계 수 감소
+            guidance_scale=7.5,
+            width=512,
+            height=512
+        ).images[0]
+        
+        # PIL 이미지를 numpy 배열로 변환
         return np.array(image)
     
     def apply_texture_to_shape(self, shape_image, texture_image):
